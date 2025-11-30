@@ -1,3 +1,9 @@
 Data/
 *.csv
 *.parquet
+# Ignore model weight files
+*.pth
+*.pkl
+# Ignore Python cache
+__pycache__/
+*.pyc

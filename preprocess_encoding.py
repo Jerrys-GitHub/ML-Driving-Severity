@@ -158,7 +158,7 @@ def main():
     print(df.isna().sum().sort_values(ascending=False).head(20))
 
     # save regional dataset
-    df.to_parquet("Data/US_Accidents_Regional.parquet", index=False)
+    #df.to_parquet("Data/US_Accidents_Regional.parquet", index=False)
 
     # Build MODEL dataset
     X_train, X_test, y_train, y_test = smote_model_dataset(df)
@@ -167,7 +167,10 @@ def main():
     X_train.to_parquet("Data/US_Accidents_Model_X_Train.parquet", index=False, engine="pyarrow")
     X_test.to_parquet("Data/US_Accidents_Model_X_Test.parquet", index=False, engine="pyarrow")
 
+    y_train = y_train.to_frame(name="Severity_Binary")
     y_train.to_parquet("Data/US_Accidents_Model_y_Train.parquet", index=False, engine="pyarrow")
+
+    y_test = y_test.to_frame(name="Severity_Binary")
     y_test.to_parquet("Data/US_Accidents_Model_y_Test.parquet", index=False, engine="pyarrow")
 
 
