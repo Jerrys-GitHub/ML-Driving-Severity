@@ -2,7 +2,6 @@ import pandas as pd
 import numpy as np
 
 from sklearn.linear_model import LogisticRegression
-from sklearn.tree import DecisionTreeClassifier
 from sklearn.neural_network import MLPClassifier
 from sklearn.model_selection import (
     train_test_split,
@@ -10,7 +9,6 @@ from sklearn.model_selection import (
 )
 
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.decomposition import PCA
 import joblib
 
 
@@ -36,9 +34,7 @@ from xgboost import XGBClassifier
 # GLOBAL VARS
 RANDOM_STATE = 42
 
-###########################
-# MLP NN PYTORCH FUNCTIONS#
-###########################
+# MLP NN PYTORCH FUNCTIONS
 
 class MLP(nn.Module):
     def __init__(self, input_dim, hidden_sizes):
@@ -47,13 +43,12 @@ class MLP(nn.Module):
         prev = input_dim
 
         for h in hidden_sizes:
-            layers.append(nn.Linear(prev, h))  # fully connected layer
-            layers.append(nn.ReLU())  # activation function
+            layers.append(nn.Linear(prev, h))
+            layers.append(nn.ReLU()) #RELU ACTIVATION FUNCTION
             prev = h
 
-        layers.append(nn.Linear(prev, 1))  # final output layer
-
-        self.net = nn.Sequential(*layers)  # build network
+        layers.append(nn.Linear(prev, 1))
+        self.net = nn.Sequential(*layers) #bulids the layers
 
     def forward(self, x):
         return self.net(x)
@@ -63,7 +58,7 @@ def make_loaders(X_train, y_train, batch_size=2048, val_split=0.1):
         X_train.values,
         y_train.values,
         test_size=val_split,
-        stratify=y_train.values,     # <-- CRITICAL
+        stratify=y_train.values,
         random_state=RANDOM_STATE
     )
 
@@ -137,8 +132,8 @@ def evaluate_torch(model, X_test, y_test, device="cpu", name="Torch MLP"):
         logits = model(torch.tensor(X_test.values, dtype=torch.float32).to(device))
         logits = logits.cpu().numpy().squeeze()
 
-    # Convert logits → probabilities
-    probs = 1 / (1 + np.exp(-logits))  # sigmoid
+    # Convert logits to probabilities
+    probs = 1 / (1 + np.exp(-logits))
 
     preds_label = (probs >= 0.60).astype(int)
 
@@ -171,7 +166,7 @@ def tune_pytorch_mlp(X_train_fs, y_train, device="cpu"):
 
     train_loader, val_loader = make_loaders(X_train_fs, y_train)
 
-    # 👉 extract REAL validation X/y from val_loader
+    # extract REAL validation X/y from val_loader
     X_val_list = []
     y_val_list = []
 
@@ -341,9 +336,7 @@ def feature_selection(
     print("\n=== FEATURE SELECTION (XGBoost Only) START ===")
     print("Initial Features:", X_train.shape[1])
 
-    # ---------------------------------------------------
     #  XGBoost Feature Importance
-    # ---------------------------------------------------
     print("Running XGBoost feature selection...")
 
     xgb = XGBClassifier(
@@ -358,7 +351,7 @@ def feature_selection(
         random_state=RANDOM_STATE
     )
 
-    # Sampling for speed if dataset is huge
+    # Sampling for speed (dataset is huge)
     if len(X_train) > max_fs_sample:
         X_fs = X_train.sample(max_fs_sample, random_state=RANDOM_STATE)
         y_fs = y_train.loc[X_fs.index]
@@ -398,9 +391,7 @@ def main():
     print("Full training set shape:", X_train.shape)
     print("Full test set shape    :", X_test.shape)
 
-    ##############################################
-    #         APPLY XGBOOST FEATURE SELECTION    #
-    ##############################################
+    # APPLY XGBOOST FEATURE SELECTION
 
     X_train_fs, X_test_fs, selected_features = feature_selection(
         X_train,
@@ -414,7 +405,7 @@ def main():
     print("Test shape :", X_test_fs.shape)
 
 
-    # small sample for tuning
+    # Small sample for tuning
     X_train_small, _, y_train_small, _ = train_test_split(
         X_train_fs, y_train,
         train_size=200_000,
@@ -423,7 +414,7 @@ def main():
     )
 
     print("\nTuning sample shape:", X_train_small.shape)
-    """
+
     print("\n=== LOGISTIC REGRESSION ===")
 
     log_base = baseline_log_reg()
@@ -460,18 +451,16 @@ def main():
         cv=3
     )
 
-    evaluate(log_fine, X_test_pca, y_test, "LogReg Tuned")
+    evaluate(log_fine, X_test_fs, y_test, "LogReg Tuned")
 
-    """
+
 
     print("\n=== PYTORCH MLP (Final Model) ===")
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print("Using device:", device)
 
-    # -------------------------------------------------
     # STEP 1 — Split TRAIN into TRAIN + VAL
-    # -------------------------------------------------
     X_train_final, X_val_final, y_train_final, y_val_final = train_test_split(
         X_train_fs, y_train,
         test_size=0.10,
@@ -479,9 +468,7 @@ def main():
         random_state=RANDOM_STATE
     )
 
-    # -------------------------------------------------
-    # STEP 2 — Create DataLoaders
-    # -------------------------------------------------
+    #  Create DataLoaders
     train_ds = TensorDataset(
         torch.tensor(X_train_final.values, dtype=torch.float32),
         torch.tensor(y_train_final.values, dtype=torch.float32)
@@ -494,45 +481,33 @@ def main():
     train_loader = DataLoader(train_ds, batch_size=2048, shuffle=True)
     val_loader = DataLoader(val_ds, batch_size=4096, shuffle=False)
 
-    # -------------------------------------------------
-    # STEP 3 — Build Model
-    # -------------------------------------------------
+    #  Build Model
     model = MLP(input_dim=X_train_fs.shape[1], hidden_sizes=[64, 32]).to(device)
 
-    # -------------------------------------------------
-    # STEP 4 — Train Model
-    # -------------------------------------------------
+    # Train Model
     model = train_model(model, train_loader, val_loader, device=device)
 
-    # -------------------------------------------------
-    # STEP 5 — Threshold Tuning on VALIDATION SET
-    # -------------------------------------------------
+    #  Threshold Tuning on VALIDATION SET
     best_threshold = find_best_threshold(model, X_val_final, y_val_final, device)
     print("Best threshold:", best_threshold)
 
-    # -------------------------------------------------
-    # STEP 6 — Save Weights
-    # -------------------------------------------------
-    torch.save(model.state_dict(), "mlp_64_32_final.pth")
+    # Save Weights
+    torch.save(model.state_dict(), "Data/mlp_64_32_final.pth")
     print("Saved model to mlp_64_32_final.pth")
 
 
     print("\n=== Random Forest Baseline ===")
 
-    # --------------------------
     # BASELINE RF
-    # --------------------------
     rf_base = baseline_rf()
     rf_base.fit(X_train_small, y_train_small)
     evaluate(rf_base, X_test_fs, y_test, "Random Forest Baseline")
 
     # Save baseline RF
-    joblib.dump(rf_base, "rf_baseline.pkl")
+    joblib.dump(rf_base, "Data/rf_baseline.pkl")
     print("Saved rf_baseline.pkl")
 
-    # --------------------------
     # COARSE SEARCH
-    # --------------------------
     rf_coarse_params = {
         "n_estimators": [100, 200, 300],
         "max_depth": [10, 20, 30],
@@ -548,12 +523,10 @@ def main():
     )
 
     # Save coarse model
-    joblib.dump(rf_coarse, "rf_coarse.pkl")
+    joblib.dump(rf_coarse, "Data/rf_coarse.pkl")
     print("Saved rf_coarse.pkl")
 
-    # --------------------------
     # FINE SEARCH
-    # --------------------------
     rf_fine_params = {
         "n_estimators": [200, 300],
         "max_depth": [15, 20, 25],
@@ -569,12 +542,10 @@ def main():
     )
 
     # Save fine-tuned RF
-    joblib.dump(rf_fine, "rf_tuned.pkl")
+    joblib.dump(rf_fine, "Data/rf_tuned.pkl")
     print("Saved rf_tuned.pkl")
 
-    # --------------------------
     # FINAL EVALUATION
-    # --------------------------
     evaluate(rf_fine, X_test_fs, y_test, "Random Forest Tuned")
 
 

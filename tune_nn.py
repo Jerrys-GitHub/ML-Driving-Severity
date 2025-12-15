@@ -1,7 +1,4 @@
-# tune_pos_weight.py
-
 import torch
-import torch.nn as nn
 from torch.utils.data import TensorDataset, DataLoader
 
 import pandas as pd
@@ -11,22 +8,14 @@ from sklearn.metrics import (
     f1_score, roc_auc_score, confusion_matrix
 )
 
-###############################
-# IMPORT YOUR MLP + TRAINER
-###############################
-# Change this import to your actual file name:
 from models import MLP, train_model
-# e.g. if your file is run_nn_model.py, do:
-# from run_nn_model import MLP, train_model
 
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 print("Using device:", DEVICE)
 
 
-##############################################
 # SIMPLE VALIDATION EVALUATION
-##############################################
 
 def evaluate_val(model, X_val, y_val, device, threshold=0.60):
 
@@ -56,9 +45,7 @@ def evaluate_val(model, X_val, y_val, device, threshold=0.60):
     return f1
 
 
-##############################################
 # MAIN — TUNE pos_weight
-##############################################
 
 def main():
 
@@ -67,7 +54,7 @@ def main():
     X_train = pd.read_parquet("Data/X_train_fs.parquet")
     y_train = pd.read_parquet("Data/y_train.parquet").squeeze()
 
-    # -------- Split into TRAIN and VALIDATION -------
+    # Split into TRAIN and VALIDATION
     X_tr, X_val, y_tr, y_val = train_test_split(
         X_train, y_train,
         test_size=0.10,
@@ -75,7 +62,7 @@ def main():
         random_state=42
     )
 
-    # -------- Convert to Torch --------
+    # Convert to Torch
     train_ds = TensorDataset(
         torch.tensor(X_tr.values, dtype=torch.float32),
         torch.tensor(y_tr.values, dtype=torch.float32)
@@ -88,7 +75,7 @@ def main():
     train_loader = DataLoader(train_ds, batch_size=2048, shuffle=True)
     val_loader = DataLoader(val_ds, batch_size=4096, shuffle=False)
 
-    # -------- Values to test ----------
+    # Values to test
     pos_weights = [1.0, 1.5, 2.0]
 
     best_f1 = -1
@@ -118,13 +105,13 @@ def main():
             best_pw = pw
             best_model = trained_model
 
-    # -------- Print final decision --------
+    # Print final decision
     print("\n=====================================")
     print(f"BEST pos_weight = {best_pw}")
     print(f"BEST Validation F1 = {best_f1:.4f}")
     print("=====================================")
 
-    # -------- Save the best model --------
+    # Save the best model
     save_path = f"best_mlp_64_32_posweight_{best_pw}.pth"
     torch.save(best_model.state_dict(), save_path)
     print(f"Saved best model to {save_path}")

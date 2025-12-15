@@ -1,6 +1,9 @@
 import pandas as pd
 import torch
 import numpy as np
+import joblib
+from matplotlib import pyplot as plt
+from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import KFold
 from torch import nn
 from sklearn.metrics import (
@@ -10,10 +13,49 @@ from sklearn.metrics import (
     f1_score,
     roc_auc_score,
     confusion_matrix,
-    average_precision_score
+    average_precision_score, auc, roc_curve
 )
 
-from models import load_data, feature_selection
+
+def train_log_reg(X_train, y_train):
+    print("\n=== Training Logistic Regression (Tuned) ===")
+    log_reg = LogisticRegression(
+        solver="lbfgs",
+        max_iter=2000,
+        class_weight="balanced",
+        n_jobs=-1,
+        C=1.0
+    )
+    log_reg.fit(X_train, y_train)
+    print("Logistic Regression trained.")
+    return log_reg
+
+def plot_roc_all(y_test, mlp_probs, rf_probs, log_probs):
+    fpr_mlp, tpr_mlp, _ = roc_curve(y_test, mlp_probs)
+    fpr_rf,  tpr_rf,  _ = roc_curve(y_test, rf_probs)
+    fpr_log, tpr_log, _ = roc_curve(y_test, log_probs)
+
+    auc_mlp = auc(fpr_mlp, tpr_mlp)
+    auc_rf  = auc(fpr_rf,  tpr_rf)
+    auc_log = auc(fpr_log, tpr_log)
+
+    plt.figure(figsize=(10, 8))
+    plt.plot(fpr_mlp, tpr_mlp, label=f"MLP (AUC={auc_mlp:.4f})", linewidth=2)
+    plt.plot(fpr_rf,  tpr_rf,  label=f"Random Forest (AUC={auc_rf:.4f})", linewidth=2)
+    plt.plot(fpr_log, tpr_log, label=f"Logistic Regression (AUC={auc_log:.4f})", linewidth=2)
+
+    plt.plot([0,1], [0,1], "k--", label="Chance")
+
+    plt.xlabel("False Positive Rate")
+    plt.ylabel("True Positive Rate")
+    plt.title("ROC Curve Comparison (MLP vs RF vs Logistic Regression)")
+    plt.legend()
+    plt.grid(True)
+    plt.tight_layout()
+    plt.savefig("roc_all_models.png", dpi=300)
+    plt.show()
+
+    print("\nSaved ROC plot as roc_all_models.png")
 
 def threshold_cross_validation(model, X, y, device, thresholds, k=5):
 
@@ -62,9 +104,6 @@ def threshold_cross_validation(model, X, y, device, thresholds, k=5):
     return best_t, avg_scores
 
 
-# -------------------------------
-# 1. IMPORT YOUR MLP ARCHITECTURE
-# -------------------------------
 class MLP(nn.Module):
     def __init__(self, input_dim, hidden_sizes):
         super().__init__()
@@ -83,9 +122,7 @@ class MLP(nn.Module):
         return self.net(x)
 
 
-# -------------------------------
-# 2. RUN MODEL ON A GIVEN DATASET
-# -------------------------------
+# RUN MODEL ON DATASET
 def run_model(model_path, X, y, threshold, device="cuda"):
     device = torch.device(device if torch.cuda.is_available() else "cpu")
 
@@ -97,7 +134,6 @@ def run_model(model_path, X, y, threshold, device="cuda"):
     # Tensor conversion
     X_tensor = torch.tensor(X.values, dtype=torch.float32).to(device)
 
-    # Forward pass
     with torch.no_grad():
         logits = model(X_tensor).cpu().numpy().flatten()
         probs = 1 / (1 + np.exp(-logits))
@@ -139,36 +175,19 @@ def main():
     print("Train FS shape:", X_train_fs.shape)
     print("Test FS shape :", X_test_fs.shape)
 
-    # Load selected feature list
-    with open("Data/selected_features.txt", "r") as f:
-        selected_features = [line.strip() for line in f.readlines()]
-    print("Loaded selected features.")
-
-    # ---------------------------
-    # DEFINE DEVICE
-    # ---------------------------
+    # DEVICE
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    # ---------------------------
-    # LOAD TRAINED MODEL
-    # ---------------------------
-    print("\nLoading trained model...")
-    model = MLP(input_dim=X_train_fs.shape[1], hidden_sizes=[64, 32]).to(device)
-    model.load_state_dict(torch.load("best_mlp_64_32_posweight_2.0.pth", map_location=device))
-    model.eval()
+    # Load MLP Model + Test Thresholds
+    print("\nLoading trained MLP model...")
+    mlp = MLP(input_dim=X_train_fs.shape[1], hidden_sizes=[64, 32]).to(device)
+    mlp.load_state_dict(torch.load("Data/best_mlp_64_32_posweight_2.0.pth", map_location=device))
+    mlp.eval()
 
-    print("Model loaded.")
-
-    # ---------------------------
-    # THRESHOLD VALUES TO TEST
-    # ---------------------------
     thresholds = [0.45, 0.50, 0.55, 0.60, 0.65, 0.70]
 
-    # ---------------------------
-    # RUN CROSS-VALIDATION FOR THRESHOLD
-    # ---------------------------
-    best_threshold, scores = threshold_cross_validation(
-        model=model,
+    best_threshold, _ = threshold_cross_validation(
+        model=mlp,
         X=X_train_fs,
         y=y_train,
         device=device,
@@ -178,17 +197,36 @@ def main():
 
     print("\nBest threshold from CV:", best_threshold)
 
-    # ---------------------------
-    # FINAL EVALUATION ON TEST SET
-    # ---------------------------
-    run_model(
-        model_path="best_mlp_64_32_posweight_2.0.pth",
+    mlp_probs, _ = run_model(
+        model_path="Data/best_mlp_64_32_posweight_2.0.pth",
         X=X_test_fs,
         y=y_test,
-        threshold=.55,   # <-- USE BEST THRESHOLD
+        threshold=best_threshold,
         device=device
     )
 
+    # 2. LOAD TUNED RANDOM FOREST
+    print("\n=== Loading Tuned Random Forest ===")
+    rf = joblib.load("Data/rf_tuned.pkl")
+
+    rf_probs = rf.predict_proba(X_test_fs)[:, 1]
+
+    # 3. TRAIN TUNED LOGISTIC REGRESSION
+    log_reg = train_log_reg(X_train_fs, y_train)
+
+    # Save file
+    joblib.dump(log_reg, "Data/log_reg_tuned.pkl")
+    print("Saved logistic regression as log_reg_tuned.pkl")
+
+    log_probs = log_reg.predict_proba(X_test_fs)[:, 1]
+
+    # 4. PLOT ROC CURVES FOR ALL 3 MODELS
+    plot_roc_all(
+        y_test=y_test,
+        mlp_probs=mlp_probs,
+        rf_probs=rf_probs,
+        log_probs=log_probs
+    )
 
 if __name__ == "__main__":
     main()

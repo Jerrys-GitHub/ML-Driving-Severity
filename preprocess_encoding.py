@@ -2,7 +2,6 @@ import pandas as pd
 from imblearn.over_sampling import SMOTENC
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split
-import pyarrow
 
 # 1. ADD TIME FEATURES
 def add_time_features(df):
@@ -44,11 +43,11 @@ def drop_unused(df):
 
 # 4. Convert columns to boolean 0/1 values.
 def fix_boolean_columns(df):
-    # Convert actual boolean dtype → int
+    # Convert actual boolean dtype to int
     bool_cols = df.select_dtypes(include=["bool"]).columns
     df[bool_cols] = df[bool_cols].astype(int)
 
-    # Convert float columns that are only {0.0, 1.0} → int
+    # Convert float columns that are only {0.0, 1.0} to int
     for col in df.columns:
         if df[col].dtype == float:
             unique_vals = set(df[col].dropna().unique())
@@ -57,7 +56,7 @@ def fix_boolean_columns(df):
 
     return df
 
-# 5. FULL SECOND-STAGE PREPROCESS OF STEPS 1-4
+# 5. FULL SECOND-STAGE PREPROCESS
 def preprocess(df):
     df = add_time_features(df)
     df = add_daylight_feature(df)
@@ -68,14 +67,13 @@ def preprocess(df):
     return df
 
 # 7. APPLY SMOTENC TO MODEL DATASET
-# =====================================================
 def smote_model_dataset(df):
 
-    # MODEL = NO geographic columns
+    # NO geographic columns
     regional_cols = ["State", "Start_Lat", "Start_Lng"]
     model_df = df.drop(columns=[c for c in regional_cols if c in df.columns], errors="ignore")
 
-    # --- Train/test split ---
+    # Train/test split
     y = model_df["Severity_Binary"]
     X = model_df.drop(columns=["Severity", "Severity_Binary"])
 
@@ -85,7 +83,7 @@ def smote_model_dataset(df):
         stratify=y
     )
 
-    # --- Handle missing values before SMOTE (required) ---
+    #  Handle missing values before SMOTE
     for col in X_train.columns:
         if X_train[col].dtype == "object":
             # fill categorical with most common value
@@ -98,13 +96,12 @@ def smote_model_dataset(df):
             X_train[col] = X_train[col].fillna(median)
             X_test[col] = X_test[col].fillna(median)
 
-    # --- Identify categorical columns FOR SMOTENC ---
+    # Identify categorical columns FOR SMOTENC
     categorical_cols = [col for col in X_train.columns if X_train[col].dtype == "object"]
-    #SMOTENC requires the columns indices as integer values for NumPy
+    #columns indices as integer values for NumPy
     categorical_indices = [X_train.columns.get_loc(col) for col in categorical_cols]
 
-    #create a SMOTENC object that makes the minority class 50% of the majority (creating roughly 1.4 million points)
-    #NOTE: SMOTENC must only be applied to NON ONE-HOT encoded features
+    #create a SMOTENC object that makes the minority class 50% of the majority onto features that are NOT ONE HOT ENCODED
     smote = SMOTENC(
         categorical_features=categorical_indices,
         random_state=None,
@@ -113,7 +110,7 @@ def smote_model_dataset(df):
 
     X_train_res, y_train_res = smote.fit_resample(X_train, y_train)
 
-    # --- One-hot encode AFTER SMOTE (train + test)
+    # One-hot encode AFTER SMOTE (train + test)
     X_train_res = pd.get_dummies(X_train_res, drop_first=False)
     X_test = pd.get_dummies(X_test, drop_first=False)
 
@@ -158,7 +155,7 @@ def main():
     print(df.isna().sum().sort_values(ascending=False).head(20))
 
     # save regional dataset
-    #df.to_parquet("Data/US_Accidents_Regional.parquet", index=False)
+    df.to_parquet("Data/US_Accidents_Regional.parquet", index=False)
 
     # Build MODEL dataset
     X_train, X_test, y_train, y_test = smote_model_dataset(df)
